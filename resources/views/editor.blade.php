@@ -4,16 +4,33 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>Floor Plan Editor — Phase 1</title>
+    <title>{{ $shop->name }} / {{ $floor->name }} — Editor</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="h-screen overflow-hidden bg-slate-100 text-slate-800 antialiased">
+    @php
+        $sseatCtx = [
+            'mode' => 'editor',
+            'shop' => ['id' => $shop->id, 'slug' => $shop->slug, 'name' => $shop->name],
+            'floor' => ['id' => $floor->id, 'name' => $floor->name, 'layout' => $floor->layout, 'bg_url' => $floor->bg_url],
+            'floors' => $floors->map(fn($f) => ['id' => $f->id, 'name' => $f->name, 'edit_url' => route('floors.edit', [$shop, $f])])->values(),
+        ];
+    @endphp
+    <script>
+        window.__SSEAT__ = {!! json_encode($sseatCtx, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) !!};
+    </script>
     <div id="app" class="flex h-full flex-col">
         {{-- Top toolbar --}}
         <header class="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2 shadow-sm">
             <div class="flex items-center gap-3">
-                <h1 class="text-lg font-semibold text-slate-900">🪑 Seat Map Editor</h1>
-                <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Phase 1</span>
+                <a href="{{ route('shops.show', $shop) }}" class="text-sm text-slate-500 hover:text-slate-700">← {{ $shop->name }}</a>
+                <h1 class="text-lg font-semibold text-slate-900">{{ $floor->name }}</h1>
+                <select id="floor-switcher" class="rounded border border-slate-300 px-2 py-1 text-sm">
+                    @foreach ($floors as $f)
+                        <option value="{{ route('floors.edit', [$shop, $f]) }}" @selected($f->id === $floor->id)>{{ $f->name }}</option>
+                    @endforeach
+                </select>
+                <a href="{{ route('floors.view', [$shop, $floor]) }}" class="btn-ghost" target="_blank">👁 Xem</a>
             </div>
             <div class="flex items-center gap-1.5">
                 <button id="btn-undo" class="btn-ghost" title="Undo (Ctrl+Z)">↶ Undo</button>
@@ -46,7 +63,11 @@
                     </button>
                     <button class="tool-btn" data-tool="chair">
                         <div class="h-6 w-6 rounded-md border-2 border-amber-500 bg-amber-50"></div>
-                        <span>Ghế</span>
+                        <span>Ghế vuông</span>
+                    </button>
+                    <button class="tool-btn" data-tool="chair-round">
+                        <div class="h-6 w-6 rounded-full border-2 border-amber-500 bg-amber-50"></div>
+                        <span>Ghế tròn</span>
                     </button>
                     <button class="tool-btn" data-tool="wall">
                         <div class="h-2 w-8 bg-slate-700"></div>

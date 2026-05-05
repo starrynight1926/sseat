@@ -1,8 +1,8 @@
 import Konva from 'konva';
 import { createObject } from '../editor/objects.js';
 
-const STORAGE_KEY = 'sseat:phase1:layout';
-const STATUS_KEY  = 'sseat:phase1:chair-status';
+const CTX = (typeof window !== 'undefined' && window.__SSEAT__) || null;
+const STATUS_KEY = CTX?.floor ? `sseat:floor:${CTX.floor.id}:chair-status` : 'sseat:phase1:chair-status';
 
 const STATUS_COLORS = {
     available: { fill: '#fef3c7', stroke: '#f59e0b' },
@@ -50,56 +50,34 @@ export function initViewer() {
         state.stage.height(container.clientHeight);
     });
 
-    // Auto-load: ?src=storage|hash data
-    const params = new URLSearchParams(location.search);
-    if (params.get('src') === 'storage') {
-        loadFromStorage();
-    } else if (location.hash.startsWith('#data=')) {
-        try {
-            const json = JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(6)))));
-            renderLayout(json);
-        } catch (e) { console.error(e); }
+    // Auto-load from server context
+    const layout = CTX?.floor?.layout;
+    if (layout && Array.isArray(layout.objects) && layout.objects.length) {
+        renderLayout(layout);
+    } else {
+        $('viewer-empty')?.classList.remove('hidden');
+        $('viewer-empty')?.classList.add('flex');
     }
 }
 
 function bindUI() {
-    const handleFile = (file) => {
-        const r = new FileReader();
-        r.onload = (e) => {
-            try { renderLayout(JSON.parse(e.target.result)); }
-            catch { alert('File JSON không hợp lệ'); }
-        };
-        r.readAsText(file);
-    };
-    $('file-import').onchange = (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); };
-    $('file-import-2').onchange = (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); };
-
-    $('btn-from-storage').onclick = loadFromStorage;
-    $('btn-from-storage-2').onclick = loadFromStorage;
-
-    const modal = $('paste-modal');
-    $('btn-paste').onclick = () => { modal.classList.remove('hidden'); modal.classList.add('flex'); $('paste-area').focus(); };
-    $('paste-cancel').onclick = () => { modal.classList.add('hidden'); modal.classList.remove('flex'); };
-    $('paste-ok').onclick = () => {
-        try {
-            const data = JSON.parse($('paste-area').value);
-            renderLayout(data);
-            modal.classList.add('hidden'); modal.classList.remove('flex');
-        } catch { alert('JSON không hợp lệ'); }
-    };
+    const switcher = $('floor-switcher');
+    if (switcher) switcher.onchange = (e) => { window.location.href = e.target.value; };
 
     $('btn-reset-status').onclick = () => {
         if (!confirm('Reset tất cả ghế về trạng thái trống?')) return;
         chairStatus = {};
         saveStatus();
         state.mainLayer.getChildren().forEach(n => {
-            if ((n.getAttr('appData') || {}).type === 'chair') applyChairStatus(n, 'available');
+            const t = (n.getAttr('appData') || {}).type;
+            if (t === 'chair' || t === 'chair-round') applyChairStatus(n, 'available');
         });
         state.mainLayer.batchDraw();
         let chairCount = 0, total = 0;
         state.mainLayer.getChildren().forEach(n => {
             total++;
-            if ((n.getAttr('appData') || {}).type === 'chair') chairCount++;
+            const t = (n.getAttr('appData') || {}).type;
+            if (t === 'chair' || t === 'chair-round') chairCount++;
         });
         updateMeta(total, chairCount, 0);
     };
@@ -183,13 +161,6 @@ function updateZoomLabel() {
     $('vz-label').textContent = Math.round(state.stage.scaleX() * 100) + '%';
 }
 
-function loadFromStorage() {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) { alert('Chưa có layout nào lưu trong trình duyệt này'); return; }
-    try { renderLayout(JSON.parse(raw)); }
-    catch { alert('Dữ liệu lưu bị hỏng'); }
-}
-
 function drawGrid() {
     state.gridLayer.destroyChildren();
     const { width, height } = state.canvas;
@@ -225,7 +196,7 @@ async function renderLayout(data) {
     data.objects.forEach(o => {
         const node = createObject(o.type, o);
         node.draggable(false);
-        if (o.type === 'chair') {
+        if (o.type === 'chair' || o.type === 'chair-round') {
             chairCount++;
             const chairId = o.id;
             const status = chairStatus[chairId] || 'available';
@@ -258,8 +229,10 @@ async function renderLayout(data) {
 }
 
 function updateMeta(total, chairCount, occupied) {
+    const meta = $('viewer-meta');
+    if (!meta) return;
     const free = chairCount - occupied;
-    $('viewer-meta').innerHTML =
+    meta.innerHTML =
         `${total} đối tượng · ` +
         `<span class="text-amber-600">● ${free} trống</span> / ` +
         `<span class="text-red-600">● ${occupied} có người</span> / ${chairCount} ghế`;
@@ -287,7 +260,7 @@ function toggleChair(chairId, node) {
     state.mainLayer.getChildren().forEach(n => {
         total++;
         const data = n.getAttr('appData') || {};
-        if (data.type === 'chair') {
+        if (data.type === 'chair' || data.type === 'chair-round') {
             chairCount++;
             if (n.getAttr('chairStatus') === 'occupied') occupiedCount++;
         }

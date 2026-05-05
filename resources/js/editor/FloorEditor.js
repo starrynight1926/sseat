@@ -3,8 +3,9 @@ import { createObject, OBJECT_DEFAULTS } from './objects.js';
 import { renderProperties } from './properties.js';
 import { History } from './history.js';
 
-const STORAGE_KEY = 'sseat:phase1:layout';
 const FORMAT_VERSION = '1.0';
+const CTX = (typeof window !== 'undefined' && window.__SSEAT__) || null;
+const STORAGE_KEY = CTX?.floor ? `sseat:floor:${CTX.floor.id}:layout` : 'sseat:phase1:layout';
 
 const state = {
     stage: null,
@@ -14,7 +15,9 @@ const state = {
     transformer: null,
     bgImage: null,
     bgUrl: null,
-    selectedNode: null,
+    selectedNode: null,    // legacy single ref (= first of selectedNodes)
+    selectedNodes: [],
+    selectionRect: null,
     gridSize: 20,
     showGrid: true,
     snap: true,
@@ -40,8 +43,13 @@ function uid() { return 'obj_' + (state.nextId++).toString(36) + '_' + Date.now(
 
 function snapValue(v) {
     if (!state.snap) return v;
-    return Math.round(v / state.gridSize) * state.gridSize;
+    // Half-grid snap: align to 0.5 cell so user can place at 1, 1.5, 2 cells
+    const step = state.gridSize / 2;
+    return Math.round(v / step) * step;
 }
+
+// Clipboard for copy/paste
+let clipboard = [];
 
 // ───────── Init ─────────
 export function initEditor() {
@@ -74,8 +82,11 @@ export function initEditor() {
     bindStageEvents();
     bindKeyboard();
 
-    // Auto load
-    if (!loadFromStorage()) {
+    // Auto load: prefer DB layout from server context, fallback to localStorage
+    const initial = CTX?.floor?.layout;
+    if (initial && Object.keys(initial).length) {
+        deserialize(initial);
+    } else if (!loadFromStorage()) {
         centerStage();
     }
 
@@ -153,7 +164,12 @@ function addObjectAtCenter(toolType) {
 function attachNodeHandlers(node) {
     node.on('click tap', (e) => {
         e.cancelBubble = true;
-        selectNode(node);
+        const additive = e.evt && (e.evt.shiftKey || e.evt.ctrlKey || e.evt.metaKey);
+        if (additive) {
+            toggleNodeInSelection(node);
+        } else {
+            selectNode(node);
+        }
     });
     node.on('dragstart', () => {
         node.moveToTop();
@@ -175,15 +191,23 @@ function attachNodeHandlers(node) {
 
 // ───────── Selection ─────────
 function selectNode(node) {
-    state.selectedNode = node;
-    if (!node) {
-        state.transformer.nodes([]);
-        renderProperties(null);
-        return;
-    }
-    state.transformer.nodes([node]);
+    if (!node) { selectNodes([]); return; }
+    selectNodes([node]);
+}
+
+function selectNodes(nodes) {
+    state.selectedNodes = nodes.slice();
+    state.selectedNode = nodes[0] || null;
+    state.transformer.nodes(nodes);
     state.mainLayer.batchDraw();
-    renderProperties(node, onPropertyChange);
+    renderProperties(nodes.length === 1 ? nodes[0] : null, onPropertyChange);
+}
+
+function toggleNodeInSelection(node) {
+    const i = state.selectedNodes.indexOf(node);
+    const next = state.selectedNodes.slice();
+    if (i >= 0) next.splice(i, 1); else next.push(node);
+    selectNodes(next);
 }
 
 function onPropertyChange(field, value) {
@@ -225,7 +249,9 @@ function onPropertyChange(field, value) {
 function bindStageEvents() {
     const stage = state.stage;
 
+    let suppressNextClick = false;
     stage.on('click tap', (e) => {
+        if (suppressNextClick) { suppressNextClick = false; return; }
         if (e.target === stage || e.target.getParent() === state.gridLayer) {
             selectNode(null);
         }
@@ -247,6 +273,10 @@ function bindStageEvents() {
             stage.container().style.cursor = '';
         }
     });
+    // Rubber-band selection on empty area (left-click + drag)
+    let rubberBand = null;
+    let rubberStart = null;
+
     stage.on('mousedown touchstart', (e) => {
         const evt = e.evt;
         if (evt.button === 1 || (spaceDown && evt.button === 0)) {
@@ -254,20 +284,71 @@ function bindStageEvents() {
             lastPos = { x: evt.clientX, y: evt.clientY };
             stage.container().style.cursor = 'grabbing';
             evt.preventDefault();
+            return;
+        }
+        // Start rubber-band only when clicking empty area with left mouse
+        if (evt.button === 0 && (e.target === stage || e.target.getParent() === state.gridLayer || e.target.getParent() === state.bgLayer)) {
+            const pointer = stage.getPointerPosition();
+            const sx = stage.scaleX();
+            rubberStart = {
+                x: (pointer.x - stage.x()) / sx,
+                y: (pointer.y - stage.y()) / sx,
+            };
+            rubberBand = new Konva.Rect({
+                x: rubberStart.x, y: rubberStart.y, width: 0, height: 0,
+                fill: 'rgba(59,130,246,0.12)',
+                stroke: '#3b82f6', strokeWidth: 1, dash: [4, 4],
+                listening: false,
+            });
+            state.mainLayer.add(rubberBand);
         }
     });
     stage.on('mousemove touchmove', (e) => {
-        if (!isPanning) return;
-        const evt = e.evt;
-        const dx = evt.clientX - lastPos.x;
-        const dy = evt.clientY - lastPos.y;
-        stage.position({ x: stage.x() + dx, y: stage.y() + dy });
-        lastPos = { x: evt.clientX, y: evt.clientY };
-        stage.batchDraw();
+        if (isPanning) {
+            const evt = e.evt;
+            const dx = evt.clientX - lastPos.x;
+            const dy = evt.clientY - lastPos.y;
+            stage.position({ x: stage.x() + dx, y: stage.y() + dy });
+            lastPos = { x: evt.clientX, y: evt.clientY };
+            stage.batchDraw();
+            return;
+        }
+        if (rubberBand && rubberStart) {
+            const pointer = stage.getPointerPosition();
+            const sx = stage.scaleX();
+            const cur = {
+                x: (pointer.x - stage.x()) / sx,
+                y: (pointer.y - stage.y()) / sx,
+            };
+            rubberBand.setAttrs({
+                x: Math.min(rubberStart.x, cur.x),
+                y: Math.min(rubberStart.y, cur.y),
+                width: Math.abs(cur.x - rubberStart.x),
+                height: Math.abs(cur.y - rubberStart.y),
+            });
+            state.mainLayer.batchDraw();
+        }
     });
-    stage.on('mouseup touchend', () => {
+    stage.on('mouseup touchend', (e) => {
         isPanning = false;
         stage.container().style.cursor = spaceDown ? 'grab' : '';
+        if (rubberBand) {
+            const box = rubberBand.getClientRect({ relativeTo: state.mainLayer });
+            rubberBand.destroy();
+            rubberBand = null;
+            rubberStart = null;
+            if (box.width > 3 && box.height > 3) {
+                const candidates = state.mainLayer.getChildren().filter(n => n !== state.transformer && n.getAttr('appData'));
+                const picked = candidates.filter(n => Konva.Util.haveIntersection(box, n.getClientRect({ relativeTo: state.mainLayer })));
+                const additive = e.evt && (e.evt.shiftKey || e.evt.ctrlKey || e.evt.metaKey);
+                const next = additive
+                    ? Array.from(new Set([...state.selectedNodes, ...picked]))
+                    : picked;
+                selectNodes(next);
+                suppressNextClick = true;
+            }
+            state.mainLayer.batchDraw();
+        }
     });
 
     // Zoom with wheel
@@ -307,11 +388,19 @@ function bindKeyboard() {
         } else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
             e.preventDefault(); doRedo();
         } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-            e.preventDefault(); saveToStorage();
+            e.preventDefault(); saveToServer();
         } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
             e.preventDefault(); duplicateSelected();
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+            e.preventDefault(); copySelected();
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+            e.preventDefault(); pasteClipboard();
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+            e.preventDefault();
+            const all = state.mainLayer.getChildren().filter(n => n !== state.transformer && n.getAttr('appData'));
+            selectNodes(all);
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
-            if (state.selectedNode) {
+            if (state.selectedNodes.length) {
                 e.preventDefault();
                 deleteSelected();
             }
@@ -322,25 +411,55 @@ function bindKeyboard() {
 }
 
 function deleteSelected() {
-    if (!state.selectedNode) return;
-    state.selectedNode.destroy();
-    selectNode(null);
+    if (!state.selectedNodes.length) return;
+    const n = state.selectedNodes.length;
+    state.selectedNodes.forEach(node => node.destroy());
+    selectNodes([]);
     state.mainLayer.batchDraw();
     pushHistory();
-    setStatus('Đã xoá đối tượng', 'success');
+    setStatus(`Đã xoá ${n} đối tượng`, 'success');
 }
 
 function duplicateSelected() {
-    if (!state.selectedNode) return;
-    const data = serializeNode(state.selectedNode);
-    data.id = uid();
-    data.x += 20; data.y += 20;
-    const node = createObject(data.type, data);
-    state.mainLayer.add(node);
-    attachNodeHandlers(node);
-    selectNode(node);
+    if (!state.selectedNodes.length) return;
+    const created = state.selectedNodes.map(src => {
+        const data = serializeNode(src);
+        data.id = uid();
+        data.x += 20; data.y += 20;
+        const node = createObject(data.type, data);
+        state.mainLayer.add(node);
+        attachNodeHandlers(node);
+        return node;
+    });
+    selectNodes(created);
     state.transformer.moveToTop();
     pushHistory();
+}
+
+function copySelected() {
+    if (!state.selectedNodes.length) return;
+    clipboard = state.selectedNodes.map(serializeNode);
+    setStatus(`Đã copy ${clipboard.length} đối tượng (Ctrl+V để dán)`, 'success');
+}
+
+function pasteClipboard() {
+    if (!clipboard.length) return;
+    // Compute group bounding box top-left for offset preservation
+    const minX = Math.min(...clipboard.map(d => d.x));
+    const minY = Math.min(...clipboard.map(d => d.y));
+    const offset = state.gridSize; // 1 cell offset
+    const created = clipboard.map(d => {
+        const data = { ...d, id: uid(), x: d.x + offset, y: d.y + offset };
+        const node = createObject(data.type, data);
+        state.mainLayer.add(node);
+        attachNodeHandlers(node);
+        return node;
+    });
+    selectNodes(created);
+    state.transformer.moveToTop();
+    pushHistory();
+    setStatus(`Đã dán ${created.length} đối tượng`, 'success');
+    void minX; void minY;
 }
 
 // ───────── UI bindings ─────────
@@ -351,8 +470,8 @@ function bindUI() {
 
     $('btn-undo').onclick = doUndo;
     $('btn-redo').onclick = doRedo;
-    $('btn-save').onclick = () => { saveToStorage(); setStatus('Đã lưu vào trình duyệt', 'success'); };
-    $('btn-load').onclick = () => { loadFromStorage() ? setStatus('Đã tải lại', 'success') : setStatus('Không có dữ liệu đã lưu', 'error'); };
+    $('btn-save').onclick = () => saveToServer();
+    $('btn-load').onclick = () => { location.reload(); };
     $('btn-export').onclick = exportJSON;
     $('btn-clear').onclick = clearAll;
 
@@ -380,6 +499,9 @@ function bindUI() {
     $('btn-zoom-out').onclick = () => zoomBy(1 / 1.2);
     $('btn-zoom-reset').onclick = () => { state.stage.scale({ x: 1, y: 1 }); centerStage(); updateZoomLabel(); };
     $('btn-zoom-fit').onclick = fitToScreen;
+
+    const switcher = $('floor-switcher');
+    if (switcher) switcher.onchange = (e) => { window.location.href = e.target.value; };
 }
 
 function zoomBy(factor) {
@@ -552,7 +674,35 @@ async function deserialize(data) {
 // ───────── Storage ─────────
 function saveToStorage() {
     const data = serialize();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (e) { /* quota */ }
+}
+
+async function saveToServer() {
+    if (!CTX?.floor?.id) {
+        saveToStorage();
+        setStatus('Đã lưu vào trình duyệt (không có tầng)', 'success');
+        return;
+    }
+    const data = serialize();
+    setStatus('Đang lưu...');
+    try {
+        const res = await fetch(`/api/floors/${CTX.floor.id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                'Accept': 'application/json',
+            },
+            body: JSON.stringify({ layout: data, bg_url: state.bgUrl }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        saveToStorage();
+        setStatus('Đã lưu vào database', 'success');
+    } catch (err) {
+        console.error('[save]', err);
+        saveToStorage();
+        setStatus('Lỗi lưu DB, đã lưu tạm localStorage: ' + err.message, 'error');
+    }
 }
 
 function loadFromStorage() {

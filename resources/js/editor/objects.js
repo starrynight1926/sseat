@@ -3,7 +3,8 @@ import Konva from 'konva';
 export const OBJECT_DEFAULTS = {
     'table-rect':   { label: 'Bàn vuông', width: 100, height: 100, fill: '#dbeafe', stroke: '#3b82f6' },
     'table-circle': { label: 'Bàn tròn',  radius: 50,              fill: '#dbeafe', stroke: '#3b82f6' },
-    'chair':        { label: 'Ghế',       width: 36,  height: 36,  fill: '#fef3c7', stroke: '#f59e0b' },
+    'chair':        { label: 'Ghế vuông', width: 36,  height: 36,  fill: '#fef3c7', stroke: '#f59e0b' },
+    'chair-round':  { label: 'Ghế tròn',  radius: 18,              fill: '#fef3c7', stroke: '#f59e0b' },
     'wall':         { label: 'Tường',     width: 200, height: 8,   fill: '#374151', stroke: '#1f2937' },
     'door':         { label: 'Cửa',       width: 60,  height: 60,  fill: 'transparent', stroke: '#a16207' },
     'label':        { label: 'Nhãn',      text: 'Nhãn chữ', fontSize: 18 },
@@ -72,6 +73,7 @@ export function createObject(type, opts = {}) {
             break;
 
         case 'table-circle':
+        case 'chair-round':
             mainShape = new Konva.Circle({
                 name: 'main-shape',
                 x: (merged.width || merged.radius * 2) / 2,
