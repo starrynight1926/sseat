@@ -42,8 +42,12 @@
                         </div>
                     </div>
                     <div class="flex items-center gap-2">
-                        <a href="{{ route('floors.view', [$shop, $floor]) }}" class="btn-ghost">👁 Xem</a>
-                        <a href="{{ route('floors.edit', [$shop, $floor]) }}" class="btn-primary">✏ Sửa</a>
+                        <button class="btn-ghost btn-copy-link"
+                                data-url="{{ route('floors.view', [$shop, $floor]) }}"
+                                title="Sao chép link công khai cho khách">🔗 Link</button>
+                        <a href="{{ route('floors.view', [$shop, $floor]) }}" target="_blank" class="btn-ghost">👁 Xem</a>
+                        <a href="{{ route('floors.operate', [$shop, $floor]) }}" class="btn-primary">🛎️ Vận hành</a>
+                        <a href="{{ route('floors.edit', [$shop, $floor]) }}" class="btn-ghost">🗺️ Sơ đồ</a>
                         <button class="btn-danger btn-delete-floor" data-id="{{ $floor->id }}">🗑</button>
                     </div>
                 </div>
@@ -65,6 +69,20 @@
             });
             if (res.ok) location.reload();
             else alert('Lỗi tạo tầng');
+        });
+
+        document.querySelectorAll('.btn-copy-link').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const url = new URL(btn.dataset.url, location.origin).href;
+                try {
+                    await navigator.clipboard.writeText(url);
+                    const old = btn.innerHTML;
+                    btn.innerHTML = '✓ Đã copy';
+                    setTimeout(() => { btn.innerHTML = old; }, 1500);
+                } catch {
+                    prompt('Sao chép link bên dưới:', url);
+                }
+            });
         });
 
         document.querySelectorAll('.btn-delete-floor').forEach(btn => {

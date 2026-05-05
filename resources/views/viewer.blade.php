@@ -3,16 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ $shop->name }} / {{ $floor->name }} — Viewer</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="h-screen overflow-hidden bg-slate-100 text-slate-800 antialiased">
     @php
+        $isOwner = auth()->check() && auth()->id() === $shop->user_id;
+        $mode = $mode ?? 'view';
+        $canOperate = $isOwner && $mode === 'operate';
+        $switchUrl = fn($f) => $mode === 'operate'
+            ? route('floors.operate', [$shop, $f])
+            : route('floors.view', [$shop, $f]);
         $sseatCtx = [
-            'mode' => 'viewer',
+            'mode' => $mode,
+            'can_operate' => $canOperate,
             'shop' => ['id' => $shop->id, 'slug' => $shop->slug, 'name' => $shop->name],
             'floor' => ['id' => $floor->id, 'name' => $floor->name, 'layout' => $floor->layout, 'bg_url' => $floor->bg_url],
-            'floors' => $floors->map(fn($f) => ['id' => $f->id, 'name' => $f->name, 'view_url' => route('floors.view', [$shop, $f])])->values(),
+            'floors' => $floors->map(fn($f) => ['id' => $f->id, 'name' => $f->name, 'view_url' => $switchUrl($f)])->values(),
+            'chairs' => $chairs->map(fn($c) => ['id' => $c->id, 'external_id' => $c->external_id, 'status' => $c->status])->values(),
+            'is_owner' => $isOwner,
+            'reset_url' => $canOperate ? route('api.chairs.reset', $floor) : null,
         ];
     @endphp
     <script>
@@ -22,17 +33,32 @@
         <header class="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2 shadow-sm">
             <div class="flex items-center gap-3">
                 <a href="{{ route('shops.show', $shop) }}" class="text-sm text-slate-500 hover:text-slate-700">← {{ $shop->name }}</a>
-                <h1 class="text-lg font-semibold text-slate-900">👁 {{ $floor->name }}</h1>
+                <h1 class="text-lg font-semibold text-slate-900">
+                    {{ $canOperate ? '�️' : '�👁' }} {{ $floor->name }}
+                </h1>
                 <select id="floor-switcher" class="rounded border border-slate-300 px-2 py-1 text-sm">
                     @foreach ($floors as $f)
-                        <option value="{{ route('floors.view', [$shop, $f]) }}" @selected($f->id === $floor->id)>{{ $f->name }}</option>
+                        <option value="{{ $switchUrl($f) }}" @selected($f->id === $floor->id)>{{ $f->name }}</option>
                     @endforeach
                 </select>
-                <span class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">Read-only</span>
+                @if ($canOperate)
+                    <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Vận hành</span>
+                @else
+                    <span class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">Chỉ xem</span>
+                @endif
             </div>
             <div class="flex items-center gap-1.5">
-                <button id="btn-reset-status" class="btn-ghost" title="Reset tất cả ghế về trống">🔄 Reset ghế</button>
-                <a href="{{ route('floors.edit', [$shop, $floor]) }}" class="btn-primary">✏ Sửa</a>
+                @if ($canOperate)
+                    <button id="btn-reset-status" class="btn-ghost" title="Reset tất cả ghế về trống">🔄 Reset ghế</button>
+                @endif
+                @if ($isOwner)
+                    @if ($mode === 'view')
+                        <a href="{{ route('floors.operate', [$shop, $floor]) }}" class="btn-primary">🛎️ Vận hành</a>
+                    @else
+                        <a href="{{ route('floors.view', [$shop, $floor]) }}" class="btn-ghost">👁 Xem</a>
+                    @endif
+                    <a href="{{ route('floors.edit', [$shop, $floor]) }}" class="btn-ghost">🗺️ Sơ đồ</a>
+                @endif
             </div>
         </header>
 

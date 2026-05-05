@@ -8,7 +8,12 @@ use Illuminate\Support\Str;
 
 class Shop extends Model
 {
-    protected $fillable = ['name', 'slug', 'description'];
+    protected $fillable = ['name', 'slug', 'description', 'user_id'];
+
+    public function owner()
+    {
+        return $this->belongsTo(\App\Models\User::class, 'user_id');
+    }
 
     protected static function booted(): void
     {
