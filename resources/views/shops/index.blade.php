@@ -15,6 +15,9 @@
                 <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Phase 3</span>
             </div>
             <div class="flex items-center gap-3 text-sm">
+                @if (auth()->user()->isAdmin())
+                    <a href="{{ route('admin.dashboard') }}" class="rounded bg-slate-900 px-3 py-1.5 text-white hover:bg-slate-800">⚙️ Admin</a>
+                @endif
                 <span class="text-slate-600">{{ auth()->user()->name }}</span>
                 <form method="POST" action="{{ route('logout') }}">@csrf
                     <button class="btn-ghost" type="submit">Đăng xuất</button>

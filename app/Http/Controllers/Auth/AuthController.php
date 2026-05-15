@@ -25,8 +25,15 @@ class AuthController extends Controller
         if (!Auth::attempt($data, $request->boolean('remember'))) {
             return back()->withErrors(['email' => 'Email hoặc mật khẩu không đúng.'])->onlyInput('email');
         }
+        $user = Auth::user();
+        if ($user->is_suspended) {
+            Auth::logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+            return back()->withErrors(['email' => 'Tài khoản đã bị khoá. Liên hệ quản trị viên.'])->onlyInput('email');
+        }
         $request->session()->regenerate();
-        return redirect()->intended(route('shops.index'));
+        return redirect()->intended($this->homeFor($user));
     }
 
     public function showRegister()
@@ -42,13 +49,21 @@ class AuthController extends Controller
             'password' => 'required|string|min:6|confirmed',
         ]);
         $user = User::create([
-            'name' => $data['name'],
-            'email' => $data['email'],
+            'name'     => $data['name'],
+            'email'    => $data['email'],
             'password' => Hash::make($data['password']),
+            'role'     => User::ROLE_CUSTOMER,
         ]);
         Auth::login($user);
         $request->session()->regenerate();
-        return redirect()->route('shops.index');
+        return redirect($this->homeFor($user));
+    }
+
+    private function homeFor(User $user): string
+    {
+        if ($user->canManageUsers()) return route('admin.dashboard');
+        if ($user->canManageShops()) return route('shops.index');
+        return route('login');
     }
 
     public function logout(Request $request)

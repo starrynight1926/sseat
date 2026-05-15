@@ -1,0 +1,3 @@
+- [Always read project plans first](feedback_follow_plans.md) — Check external plan files & DoD before implementing
+- [External docs location](reference_external_docs.md) — Project plans, specs, and rules on RaiDrive
+- [Advise standard-compliant](feedback_standard_first.md) — Don't improvise folder structures, use correct Claude Code conventions

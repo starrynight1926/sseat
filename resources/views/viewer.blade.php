@@ -9,9 +9,10 @@
 </head>
 <body class="h-screen overflow-hidden bg-slate-100 text-slate-800 antialiased">
     @php
-        $isOwner = auth()->check() && auth()->id() === $shop->user_id;
+        $user = auth()->user();
+        $isOwner = $user && ($user->id === $shop->user_id || $user->isSuperAdmin());
         $mode = $mode ?? 'view';
-        $canOperate = $isOwner && $mode === 'operate';
+        $canOperate = $user && $user->canOperate() && $mode === 'operate';
         $switchUrl = fn($f) => $mode === 'operate'
             ? route('floors.operate', [$shop, $f])
             : route('floors.view', [$shop, $f]);
@@ -24,6 +25,7 @@
             'chairs' => $chairs->map(fn($c) => ['id' => $c->id, 'external_id' => $c->external_id, 'status' => $c->status])->values(),
             'is_owner' => $isOwner,
             'reset_url' => $canOperate ? route('api.chairs.reset', $floor) : null,
+            'poll_url' => !$canOperate ? route('api.chairs.statuses', $floor) : null,
         ];
     @endphp
     <script>
@@ -51,12 +53,14 @@
                 @if ($canOperate)
                     <button id="btn-reset-status" class="btn-ghost" title="Reset tất cả ghế về trống">🔄 Reset ghế</button>
                 @endif
-                @if ($isOwner)
+                @if ($user && $user->canOperate())
                     @if ($mode === 'view')
                         <a href="{{ route('floors.operate', [$shop, $floor]) }}" class="btn-primary">🛎️ Vận hành</a>
                     @else
                         <a href="{{ route('floors.view', [$shop, $floor]) }}" class="btn-ghost">👁 Xem</a>
                     @endif
+                @endif
+                @if ($user && $user->canBuild() && ($isOwner))
                     <a href="{{ route('floors.edit', [$shop, $floor]) }}" class="btn-ghost">🗺️ Sơ đồ</a>
                 @endif
             </div>

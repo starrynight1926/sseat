@@ -9,10 +9,12 @@ class ShopController extends Controller
 {
     public function index(Request $request)
     {
-        $shops = Shop::where('user_id', $request->user()->id)
-            ->withCount('floors')
-            ->latest()
-            ->get();
+        $user = $request->user();
+        $query = $user->isSuperAdmin()
+            ? Shop::query()
+            : Shop::where('user_id', $user->id);
+
+        $shops = $query->withCount('floors')->latest()->get();
         return view('shops.index', compact('shops'));
     }
 
@@ -44,6 +46,8 @@ class ShopController extends Controller
 
     private function authorizeOwner(Request $request, Shop $shop): void
     {
-        abort_unless($shop->user_id === $request->user()->id, 403);
+        $user = $request->user();
+        if ($user->isSuperAdmin()) return;
+        abort_unless($shop->user_id === $user->id, 403);
     }
 }

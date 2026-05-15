@@ -8,17 +8,45 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Floor extends Model
 {
-    protected $fillable = ['shop_id', 'name', 'order', 'layout', 'bg_url'];
+    public const STATUS_DRAFT    = 'draft';
+    public const STATUS_PENDING  = 'pending';
+    public const STATUS_APPROVED = 'approved';
+    public const STATUS_REJECTED = 'rejected';
+
+    public const STATUSES = [
+        self::STATUS_DRAFT,
+        self::STATUS_PENDING,
+        self::STATUS_APPROVED,
+        self::STATUS_REJECTED,
+    ];
+
+    protected $fillable = [
+        'shop_id', 'name', 'order', 'layout', 'bg_url',
+        'status', 'rejection_reason', 'is_locked',
+        'submitted_at', 'reviewed_at', 'reviewed_by_id',
+    ];
 
     protected $casts = [
-        'layout' => 'array',
-        'order' => 'integer',
+        'layout'       => 'array',
+        'order'        => 'integer',
+        'is_locked'    => 'boolean',
+        'submitted_at' => 'datetime',
+        'reviewed_at'  => 'datetime',
     ];
 
     public function shop(): BelongsTo
     {
         return $this->belongsTo(Shop::class);
     }
+
+    public function reviewer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'reviewed_by_id');
+    }
+
+    public function isApproved(): bool { return $this->status === self::STATUS_APPROVED; }
+    public function isPending(): bool  { return $this->status === self::STATUS_PENDING; }
+    public function isRejected(): bool { return $this->status === self::STATUS_REJECTED; }
 
     public function chairs(): HasMany
     {

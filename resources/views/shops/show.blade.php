@@ -22,6 +22,12 @@
     </header>
 
     <main class="mx-auto max-w-5xl px-6 py-8">
+        @if (session('status'))
+            <div class="mb-4 rounded border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">{{ session('status') }}</div>
+        @endif
+        @if ($errors->any())
+            <div class="mb-4 rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">{{ $errors->first() }}</div>
+        @endif
         @if ($shop->description)
             <p class="mb-6 text-slate-600">{{ $shop->description }}</p>
         @endif
@@ -32,23 +38,56 @@
         </div>
 
         <div id="floors-list" class="space-y-2">
+            @php
+                $statusColors = [
+                    'draft'    => 'bg-slate-100 text-slate-700',
+                    'pending'  => 'bg-orange-100 text-orange-700',
+                    'approved' => 'bg-emerald-100 text-emerald-700',
+                    'rejected' => 'bg-red-100 text-red-700',
+                ];
+                $statusLabels = [
+                    'draft' => 'Bản nháp', 'pending' => 'Chờ duyệt',
+                    'approved' => 'Đã duyệt', 'rejected' => 'Bị từ chối',
+                ];
+            @endphp
             @foreach ($shop->floors as $floor)
-                <div class="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4 shadow-sm" data-floor-id="{{ $floor->id }}">
+                <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm" data-floor-id="{{ $floor->id }}">
+                    <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                        <div class="font-semibold text-slate-900">{{ $floor->name }}</div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="font-semibold text-slate-900">{{ $floor->name }}</span>
+                            <span class="rounded-full px-2 py-0.5 text-xs {{ $statusColors[$floor->status] ?? 'bg-slate-100' }}">
+                                {{ $statusLabels[$floor->status] ?? $floor->status }}
+                            </span>
+                            @if ($floor->is_locked)
+                                <span class="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800" title="Bị admin khoá">🔒 Khoá</span>
+                            @endif
+                        </div>
                         <div class="text-xs text-slate-400">
                             {{ $floor->updated_at->diffForHumans() }} ·
                             {{ is_array($floor->layout) ? count($floor->layout['objects'] ?? []) : 0 }} đối tượng
                         </div>
+                        @if ($floor->status === 'rejected' && $floor->rejection_reason)
+                            <div class="mt-2 rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-800">
+                                <strong>Lý do từ chối:</strong> {{ $floor->rejection_reason }}
+                            </div>
+                        @endif
                     </div>
-                    <div class="flex items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                        @if (in_array($floor->status, ['draft', 'rejected']) && !$floor->is_locked)
+                            <form method="POST" action="{{ route('floors.submit', $floor) }}">@csrf
+                                <button class="btn-primary" type="submit"
+                                        onclick="return confirm('Gửi sơ đồ này cho admin duyệt?')">📤 Gửi duyệt</button>
+                            </form>
+                        @endif
                         <button class="btn-ghost btn-copy-link"
                                 data-url="{{ route('floors.view', [$shop, $floor]) }}"
                                 title="Sao chép link công khai cho khách">🔗 Link</button>
                         <a href="{{ route('floors.view', [$shop, $floor]) }}" target="_blank" class="btn-ghost">👁 Xem</a>
-                        <a href="{{ route('floors.operate', [$shop, $floor]) }}" class="btn-primary">🛎️ Vận hành</a>
+                        <a href="{{ route('floors.operate', [$shop, $floor]) }}" class="btn-ghost">🛎️ Vận hành</a>
                         <a href="{{ route('floors.edit', [$shop, $floor]) }}" class="btn-ghost">🗺️ Sơ đồ</a>
                         <button class="btn-danger btn-delete-floor" data-id="{{ $floor->id }}">🗑</button>
+                    </div>
                     </div>
                 </div>
             @endforeach

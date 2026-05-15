@@ -18,6 +18,8 @@ const CAN_OPERATE = !!CTX?.can_operate;
 const chairNodes = new Map();
 // Tables (rect/circle) — kept for hit-testing chairs near a table
 const tableInfos = []; // { node, rect: {x,y,width,height} }
+// Chairs with in-flight API requests — block duplicate toggles and ignore echo-back
+const pendingToggles = new Set();
 
 function csrf() {
     return document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -57,6 +59,25 @@ export function initViewer() {
     const layout = CTX?.floor?.layout;
     if (layout && Array.isArray(layout.objects) && layout.objects.length) {
         renderLayout(layout);
+
+        // Realtime: staff/cashier operate → WebSocket, khách xem → polling 30s
+        if (CAN_OPERATE && window.Echo && CTX?.floor?.id) {
+            window.Echo.channel(`floor.${CTX.floor.id}`)
+                .listen('.chair.status.updated', (e) => {
+                    const extId = e.chairExternalId;
+                    if (pendingToggles.has(extId)) return;
+                    const node = chairNodes.get(extId);
+                    if (node) {
+                        const meta = chairs.get(extId);
+                        if (meta) meta.status = e.status;
+                        applyChairStatus(node, e.status);
+                        state.mainLayer.batchDraw();
+                        recountMeta();
+                    }
+                });
+        } else if (CTX?.poll_url) {
+            startPolling(CTX.poll_url);
+        }
     } else {
         $('viewer-empty')?.classList.remove('hidden');
         $('viewer-empty')?.classList.add('flex');
@@ -363,9 +384,10 @@ async function toggleTableChairs(tableNode) {
 async function toggleChair(extId, node) {
     const meta = chairs.get(extId);
     if (!meta?.id) return;
+    if (pendingToggles.has(extId)) return;
+    pendingToggles.add(extId);
     const cur = meta.status || 'available';
     const next = cur === 'available' ? 'occupied' : 'available';
-    // Optimistic UI
     meta.status = next;
     applyChairStatus(node, next);
     state.mainLayer.batchDraw();
@@ -389,12 +411,13 @@ async function toggleChair(extId, node) {
             recountMeta();
         }
     } catch (err) {
-        // Rollback
         meta.status = cur;
         applyChairStatus(node, cur);
         state.mainLayer.batchDraw();
         recountMeta();
         console.error('[chair-toggle]', err);
+    } finally {
+        pendingToggles.delete(extId);
     }
 }
 
@@ -427,4 +450,32 @@ function loadBg(url) {
         img.onerror = () => resolve();
         img.src = url;
     });
+}
+
+function startPolling(url) {
+    const INTERVAL = 30_000;
+    setInterval(async () => {
+        try {
+            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+            if (!res.ok) return;
+            const json = await res.json();
+            if (!json?.data) return;
+            let changed = false;
+            for (const c of json.data) {
+                const meta = chairs.get(c.external_id);
+                const node = chairNodes.get(c.external_id);
+                if (meta && node && meta.status !== c.status) {
+                    meta.status = c.status;
+                    applyChairStatus(node, c.status);
+                    changed = true;
+                }
+            }
+            if (changed) {
+                state.mainLayer.batchDraw();
+                recountMeta();
+            }
+        } catch (err) {
+            console.warn('[poll]', err);
+        }
+    }, INTERVAL);
 }

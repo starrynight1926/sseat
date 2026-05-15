@@ -695,13 +695,18 @@ async function saveToServer() {
             },
             body: JSON.stringify({ layout: data, bg_url: state.bgUrl }),
         });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
+        if (!res.ok) {
+            // Special-case: floor locked by admin (HTTP 423)
+            let msg = 'HTTP ' + res.status;
+            try { const j = await res.json(); if (j.message) msg = j.message; } catch {}
+            throw new Error(msg);
+        }
         saveToStorage();
         setStatus('Đã lưu vào database', 'success');
     } catch (err) {
         console.error('[save]', err);
         saveToStorage();
-        setStatus('Lỗi lưu DB, đã lưu tạm localStorage: ' + err.message, 'error');
+        setStatus('Lỗi lưu DB (đã lưu localStorage): ' + err.message, 'error');
     }
 }
 

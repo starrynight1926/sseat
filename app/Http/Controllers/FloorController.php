@@ -11,7 +11,7 @@ class FloorController extends Controller
     public function edit(Request $request, Shop $shop, Floor $floor)
     {
         abort_unless($floor->shop_id === $shop->id, 404);
-        abort_unless($shop->user_id === $request->user()->id, 403);
+        $this->authorizeShopAccess($request, $shop);
         return view('editor', [
             'shop' => $shop,
             'floor' => $floor,
@@ -19,14 +19,23 @@ class FloorController extends Controller
         ]);
     }
 
-    public function view(Shop $shop, Floor $floor)
+    public function view(Request $request, Shop $shop, Floor $floor)
     {
+        abort_unless($floor->shop_id === $shop->id, 404);
+        // Public access requires the floor to be approved.
+        // Owner / admin can preview at any status.
+        $user = $request->user();
+        $isOwner = $user && $shop->user_id === $user->id;
+        $isAdmin = $user && $user->isAdmin();
+        if (!$floor->isApproved() && !$isOwner && !$isAdmin) {
+            abort(403, 'Sơ đồ này chưa được duyệt công khai.');
+        }
         return $this->renderViewer($shop, $floor, 'view');
     }
 
     public function operate(Request $request, Shop $shop, Floor $floor)
     {
-        abort_unless($shop->user_id === $request->user()->id, 403);
+        $this->authorizeShopAccess($request, $shop);
         return $this->renderViewer($shop, $floor, 'operate');
     }
 
@@ -49,7 +58,7 @@ class FloorController extends Controller
 
     public function store(Request $request, Shop $shop)
     {
-        abort_unless($shop->user_id === $request->user()->id, 403);
+        $this->authorizeShopAccess($request, $shop);
         $data = $request->validate([
             'name' => 'required|string|max:120',
         ]);
@@ -63,13 +72,24 @@ class FloorController extends Controller
 
     public function update(Request $request, Floor $floor)
     {
-        abort_unless($floor->shop->user_id === $request->user()->id, 403);
+        $this->authorizeShopAccess($request, $floor->shop);
+        if ($floor->is_locked) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sơ đồ đang bị khoá bởi quản trị viên.',
+            ], 423);
+        }
         $data = $request->validate([
             'name'   => 'sometimes|string|max:120',
             'layout' => 'sometimes|array',
             'bg_url' => 'sometimes|nullable|string',
             'order'  => 'sometimes|integer',
         ]);
+        // If the layout changes after approval, revert to draft so it must be re-reviewed.
+        if (array_key_exists('layout', $data) && $floor->status === Floor::STATUS_APPROVED) {
+            $data['status'] = Floor::STATUS_DRAFT;
+            $data['rejection_reason'] = null;
+        }
         $floor->update($data);
         if (array_key_exists('layout', $data)) {
             $floor->refresh();
@@ -78,10 +98,37 @@ class FloorController extends Controller
         return response()->json(['success' => true, 'data' => $floor]);
     }
 
+    /**
+     * Owner submits the floor for admin review.
+     */
+    public function submit(Request $request, Floor $floor)
+    {
+        $this->authorizeShopAccess($request, $floor->shop);
+        if ($floor->is_locked) {
+            return back()->withErrors(['floor' => 'Sơ đồ đang bị khoá.']);
+        }
+        if (!in_array($floor->status, [Floor::STATUS_DRAFT, Floor::STATUS_REJECTED], true)) {
+            return back()->withErrors(['floor' => 'Sơ đồ không ở trạng thái cho phép gửi duyệt.']);
+        }
+        $floor->update([
+            'status'           => Floor::STATUS_PENDING,
+            'submitted_at'     => now(),
+            'rejection_reason' => null,
+        ]);
+        return back()->with('status', "Đã gửi sơ đồ \"{$floor->name}\" chờ duyệt.");
+    }
+
     public function destroy(Request $request, Floor $floor)
     {
-        abort_unless($floor->shop->user_id === $request->user()->id, 403);
+        $this->authorizeShopAccess($request, $floor->shop);
         $floor->delete();
         return response()->json(['success' => true]);
+    }
+
+    private function authorizeShopAccess(Request $request, Shop $shop): void
+    {
+        $user = $request->user();
+        if ($user->isSuperAdmin()) return;
+        abort_unless($shop->user_id === $user->id, 403);
     }
 }
